@@ -1,5 +1,5 @@
 use libc::{c_int,size_t};
-use log::{self,Log,LogRecord,LogLevel,LogLocation,SetLoggerError};
+use log::{self,Log,LogRecord,LogLocation,LogMetadata,SetLoggerError};
 use std::{fmt,ptr,result};
 use std::collections::BTreeMap;
 use Result;
@@ -18,34 +18,32 @@ pub fn send(args : &[&str]) -> c_int {
 /// Send a simple message to systemd.
 pub fn print(lvl : u32, s : &str) -> c_int {
     send(&[
-         format!("PRIORITY={}", lvl).as_slice(),
-         format!("MESSAGE={}", s).as_slice()
-         ])
+         &format!("PRIORITY={}", lvl),
+         &format!("MESSAGE={}", s),
+    ])
 }
 
 /// Send a `log::LogRecord` to systemd.
 pub fn log_record(record: &LogRecord) {
-    let lvl: u64 = unsafe {
-        use std::mem;
-        mem::transmute(record.level())
-    };
+    let lvl = record.level() as u64;
     log(lvl, record.location(), record.args());
 }
 
 pub fn log(level: u64, loc: &LogLocation, args: &fmt::Arguments)
 {
-    send(&[format!("PRIORITY={}", level).as_slice(),
-    format!("MESSAGE={}", args).as_slice(),
-    format!("CODE_LINE={}", loc.line).as_slice(),
-    format!("CODE_FILE={}", loc.file).as_slice(),
-    format!("CODE_FUNCTION={}", loc.module_path).as_slice(),
+    send(&[
+        &format!("PRIORITY={}", level),
+        &format!("MESSAGE={}", args),
+        &format!("CODE_LINE={}", loc.line()),
+        &format!("CODE_FILE={}", loc.file()),
+        &format!("CODE_FUNCTION={}", loc.module_path()),
     ]);
 }
 
-#[derive(Copy)]
+#[derive(Copy,Clone)]
 pub struct JournalLog;
 impl Log for JournalLog {
-    fn enabled(&self, _level: LogLevel, _module: &str) -> bool {
+    fn enabled(&self, _metadata: &LogMetadata) -> bool {
         true
     }
 
@@ -72,8 +70,7 @@ pub struct Journal {
 }
 
 /// Represents the set of journal files to read.
-#[stable]
-#[derive(Copy)]
+#[derive(Copy,Clone)]
 pub enum JournalFiles {
     /// The system-wide journal.
     System,
@@ -130,14 +127,15 @@ impl Journal {
         let data: *mut u8 = ptr::null_mut();
         while sd_try!(ffi::sd_journal_enumerate_data(self.j, &data, &mut sz)) > 0 {
             unsafe {
-                let b = ::collections::slice::from_raw_parts_mut(data, sz as usize);
+                let b = ::std::slice::from_raw_parts(data, sz as usize);
                 let field = ::std::str::from_utf8_unchecked(b);
                 let mut name_value = field.splitn(1, '=');
                 let name = name_value.next().unwrap();
                 let value = name_value.next().unwrap();
                 ret.insert(
-                    String::from_str(name),
-                    String::from_str(value));
+                    String::from(name),
+                    String::from(value)
+                );
             }
         }
 
